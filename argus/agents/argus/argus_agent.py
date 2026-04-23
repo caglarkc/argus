@@ -1,0 +1,256 @@
+"""Argus Agent implementation with streaming logic."""
+import os,subprocess, json
+import platform, shutil
+from pathlib import Path
+from typing import Dict, List, Any, AsyncGenerator,Mapping
+from argus.agents.base_agent import BaseAgent
+from argus.agents.agent_events import AgentEvent 
+from argus.llm.llm_basics import LLMMessage
+from argus.llm.llm_events import LLM_Events
+from argus.config.token_limits import TokenLimits
+from argus.utils.session_stats import session_stats
+from argus.llm.llm_basics import LLMResponse, ToolCall
+from.prompts import (RUNTIME_ENV_LINUX_PROMPT,
+    RUNTIME_ENV_MACOS_PROMPT,
+    RUNTIME_ENV_WINDOWS_PROMPT,
+    BASE_PROMPT_DEFAULT,
+    SANDBOX_MACOS_SEATBELT_PROMPT,
+    SANBOX_DEFAULT,
+    SANBOX_OUTSIDE,
+    GIT_INFO_BLOCK,)
+
+class ArgusAgent(BaseAgent):
+    """Argus Agent with streaming iterative tool calling logic."""
+    
+    def __init__(self, config_mgr, cli, tool_mgr):
+        super().__init__(config_mgr, cli, tool_mgr)
+        self.type = "ArgusAgent"
+        session_stats.set_current_agent(self.type)
+        self.current_turn_index = 0
+        self.max_turns = self.config_mgr.get_app_config().max_turns
+        self.system_prompt = self.get_core_system_prompt()
+        self.conversation_history = self._update_system_prompt(self.system_prompt)
+        self.file_metrics = {} 
+    
+    async def run(self, user_message: str) -> AsyncGenerator[AgentEvent, None]:
+        """Run agent with streaming output and task continuation."""
+        model_name = self.config_mgr.get_active_model_name() or ""
+        max_tokens = TokenLimits.get_limit("qwen", model_name)
+        self.cli.set_max_context_tokens(max_tokens)
+        await self.setup_tools_mcp()
+        self.current_turn_index = 0
+        session_stats.record_task_start(self.type)
+        self.trajectory_recorder.start_recording(task=user_message,
+            provider=self.config_mgr.get_active_agent().provider or "",
+            model= model_name,
+            max_steps=self.max_turns)
+        yield AgentEvent.user_message(user_message, self.current_turn_index)
+
+        cwd_prompt = (f"Please note that the user launched Argus under the path {Path.cwd()}.\n"
+            "All subsequent file-creation, file-writing, file-reading, and similar "
+            "operations should be performed within this directory.")
+        env_prompt = self._build_env_prompt()
+        project_prompt = self.config_mgr.get_project_prompt()
+        self.conversation_history.append(LLMMessage(role="user", content=project_prompt))
+        self.conversation_history.append(LLMMessage(role="user", content= env_prompt + cwd_prompt))
+        self.conversation_history.append(LLMMessage(role="user", content= self.skills_prompt))
+        self.conversation_history.append(LLMMessage(role="user", content=user_message))
+
+        while self.current_turn_index < self.max_turns:
+            async for event in self._process_turn_stream():
+                yield event
+
+    async def _process_turn_stream(self) -> AsyncGenerator[AgentEvent, None]:
+        messages = [self._convert_single_message(msg) for msg in self.conversation_history]
+        trajectory_msg = self.conversation_history.copy()
+        tools = [tool.build("argus") for tool in self.tool_mgr.list_for_provider("argus")]
+        completed_resp: LLMResponse = LLMResponse(content = "")
+
+        tokens_used = sum(self.approx_token_count(m.content or "") for m in self.conversation_history)
+        self.cli.set_current_tokens(tokens_used)
+        async for event in self.llm_client.astream_response(messages= messages, tools= tools, api = "chat"):
+            if event.type == LLM_Events.REQUEST_STARTED:
+                yield AgentEvent.llm_stream_start()
+            elif event.type == LLM_Events.ASSISTANT_DELTA:
+                yield AgentEvent.text_delta(str(event.data))
+            elif event.type == LLM_Events.TOOL_CALL_DELTA:
+                tc_data = event.data
+                if tc_data is None:
+                    continue
+            elif event.type == LLM_Events.TOOL_CALL_READY:
+                # messagetool_calls message
+                # 1. messageassistant LLMMessage
+                tool_calls = event.data or {}
+                tc_list = [ToolCall.from_raw(tc) for tc in tool_calls]
+                assistant_msg = LLMMessage(role="assistant",
+                    tool_calls = tc_list,
+                    content = "",)
+                self.conversation_history.append(assistant_msg)
+                # 2. message,message,messagetool LLMMessage
+                async for tc_event in self._process_tool_calls(tc_list):
+                    yield tc_event
+            elif event.type == LLM_Events.TOKEN_USAGE:
+                # message token message
+                usage = event.data or {}
+                total = usage.get("total_tokens", 0)
+                yield AgentEvent.turn_token_usage(total)
+            elif event.type == LLM_Events.RESPONSE_FINISHED:
+                self.current_turn_index += 1
+                if not event.data:
+                    continue
+               # message
+                finish_reason = event.data.get("finish_reason")
+                completed_resp = LLMResponse.from_raw(event.data or {})
+                self.trajectory_recorder.record_llm_interaction(messages= trajectory_msg,
+                    response= completed_resp, 
+                    provider=self.config_mgr.get_active_agent().provider or "",
+                    model=self.config_mgr.get_active_model_name() or "",
+                    tools=tools,
+                    agent_name=self.type,)
+
+                if finish_reason and finish_reason!= "tool_calls":
+                    yield AgentEvent.task_complete(finish_reason)
+
+    def _convert_single_message(self, msg: LLMMessage) -> Dict[str, Any]:
+        role = msg.role
+        data: Dict[str, Any] = {"role": role}
+        if role in ("system", "user"):
+            data["content"] = msg.content or ""
+            return data
+    
+        if role == "assistant":
+            if msg.content is not None:
+                data["content"] = msg.content
+            if msg.tool_calls:
+                converted_tool_calls = []
+                for tc in msg.tool_calls:
+                    converted_tool_calls.append({
+                        "id": tc.call_id,
+                        "type": tc.type or "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": json.dumps(tc.arguments or {}),
+                        },
+                    })
+                data["tool_calls"] = converted_tool_calls
+                return data
+
+        if role == "tool":
+            if not msg.tool_call_id:
+                raise ValueError("Tool message must have tool_call_id")
+            data["tool_call_id"] = msg.tool_call_id
+            data["content"] = msg.content
+            return data
+    
+        raise ValueError(f"Unsupported role for OpenAI messages: {role!r}")
+ 
+    async def _process_tool_calls(self, tool_calls: List[ToolCall]) -> AsyncGenerator[AgentEvent, None]:
+        # 2. message,message,messagetool LLMMessage
+        for tc in tool_calls:
+            tool = self.tool_mgr.get_tool(tc.name)
+            if not tool:
+                continue
+            name = tc.name
+            call_id = tc.call_id
+            arguments = {}
+            if isinstance(tc.arguments, Mapping):
+                arguments = dict(tc.arguments)
+            elif isinstance(tc.arguments, str) and tc.name == "apply_patch":
+                arguments = {"input": tc.arguments}
+           
+            yield AgentEvent.tool_call(call_id, name, arguments)
+            try:
+                is_success, result = await self.tool_mgr.execute(name, arguments, tool)
+                if not is_success:
+                    msg = LLMMessage(role="tool", content= str(result), tool_call_id= call_id)
+                    self.conversation_history.append(msg)
+                    yield AgentEvent.tool_result(call_id, name, result, False, arguments)
+                    continue
+                yield AgentEvent.tool_result(call_id, name, result, True, arguments)
+                content = result if isinstance(result, str) else json.dumps(result)
+                tool_msg = LLMMessage(role="tool", content= content, tool_call_id=tc.call_id)
+                self.conversation_history.append(tool_msg)
+            except Exception as e:
+                error_msg = f"Tool execution failed: {str(e)}"
+                tool_msg = LLMMessage(role="tool", content= error_msg, tool_call_id=tc.call_id)
+                self.conversation_history.append(tool_msg)
+                yield AgentEvent.tool_result(call_id, name, error_msg, False, arguments)
+
+    def _build_env_prompt(self) -> str:
+        sys_name = platform.system()
+        release = platform.release()
+        python = platform.python_version()
+    
+        if sys_name == "Windows":
+            comspec = os.environ.get("COMSPEC", "")
+            ps = shutil.which("powershell") or shutil.which("pwsh")
+            shell_hint = "PowerShell preferred" if ps else "cmd.exe"
+    
+            return RUNTIME_ENV_WINDOWS_PROMPT.format(release=release,
+                python=python,
+                shell_hint=shell_hint,
+                comspec=comspec,)
+    
+        if sys_name == "Darwin":
+            return RUNTIME_ENV_MACOS_PROMPT.format(release=release,
+                python=python,)
+    
+        # Linux / other Unix
+        return RUNTIME_ENV_LINUX_PROMPT.format(release=release,
+            python=python,)
+
+    def _update_system_prompt(self, system_prompt: str) -> List[LLMMessage]:
+        prompt = system_prompt.rstrip()
+        system_message = LLMMessage(role="system", content= prompt)
+        return [system_message]
+
+    def get_core_system_prompt(self,user_memory: str = "") -> str:
+        ARGUS_CONFIG_DIR = Path.home() / ".argus"
+        system_md_enabled = False
+        system_md_path = (ARGUS_CONFIG_DIR / "system.md").resolve()
+        system_md_var = os.environ.get("ARGUS_SYSTEM_MD", "").lower()
+        if system_md_var and system_md_var not in ["0", "false"]:
+            system_md_enabled = True
+            if system_md_var not in ["1", "true"]:
+                system_md_path = Path(system_md_var).resolve()
+            if not system_md_path.exists():
+                raise FileNotFoundError(f"Missing system prompt file '{system_md_path}'")
+
+        def is_git_repository(path: Path) -> bool:
+            """Check if the given path is inside a Git repository."""
+            try:
+                subprocess.run(["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"],
+                    check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                return True
+            except subprocess.CalledProcessError:
+                return False
+
+        def sandbox_info() -> str:
+            if os.environ.get("SANDBOX") == "sandbox-exec":
+                return SANDBOX_MACOS_SEATBELT_PROMPT 
+            elif os.environ.get("SANDBOX"):
+                return SANBOX_DEFAULT 
+            else:
+                return SANBOX_OUTSIDE 
+
+        def git_info_block() -> str:
+            if not is_git_repository(Path.cwd()):
+                return "" 
+            return  GIT_INFO_BLOCK
+
+        base_prompt = system_md_path.read_text() if system_md_enabled else BASE_PROMPT_DEFAULT.strip()
+
+        write_system_md_var = os.environ.get("ARGUS_WRITE_SYSTEM_MD", "").lower()
+        if write_system_md_var and write_system_md_var not in ["0", "false"]:
+            target_path = (system_md_path
+                if write_system_md_var in ["1", "true"]
+                else Path(write_system_md_var).resolve())
+            target_path.write_text(base_prompt)
+
+        base_prompt += "\n" + sandbox_info()
+        base_prompt += "\n" + git_info_block()
+
+        if user_memory.strip():
+            base_prompt += f"\n\n---\n\n{user_memory.strip()}"
+
+        return base_prompt

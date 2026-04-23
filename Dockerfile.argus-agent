@@ -1,0 +1,28 @@
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive TZ=UTC \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl git \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:${PATH}"
+
+WORKDIR /opt/Argus
+
+COPY pyproject.toml uv.lock.python-version README.md README_ch.md./
+COPY argus./argus
+COPY argus_config.example.yaml./
+
+RUN uv --version && uv sync --all-extras --frozen \
+ &&.venv/bin/python -V \
+ &&.venv/bin/python -c "import sys; print('shim->', sys.executable)" \
+ &&.venv/bin/python -m pip -V || true \
+ && argus -h >/dev/null 2>&1 || true
+
+RUN echo "uv at: $(command -v uv)" && ls -l /root/.local/bin/uv && ls -la /root/.local/share/uv || true
+
+CMD ["/bin/bash"]
+

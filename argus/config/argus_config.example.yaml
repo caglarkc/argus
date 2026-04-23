@@ -1,0 +1,150 @@
+# ============================================================
+# Argus message
+# message ~/.argus/argus.yaml message
+# ============================================================
+
+# ------------------------------------------------------------
+# default_agent
+# ------------------------------------------------------------
+# message Agent.
+# message models[] message agent_name message.
+# message models message agent_name.
+default_agent: argus
+
+
+# ------------------------------------------------------------
+# agents: messageagentmessage
+# ------------------------------------------------------------
+# Argus message,message provider(openai/anthropic/qwen/modelscope)
+# message Agent message, message, message wire_api(chat/responses)message.
+#
+# message agent message,message/message/message.
+#
+# message:
+# - agent_name: Argus message Agent message(argus / claudecode / codex)
+# - provider: message(openai / anthropic)
+#   messageoepnai SDKmessage,messageclaudemessageopenai 
+#
+# - model: message,message gpt-5.1 message Qwen/Qwen3-...
+# - api_key: message provider message(message CLI message ENV message)
+# - base_url: message API message
+# - wire_api: message,chat = chat.completions API,responses = /responses API
+#   messageopenai gpt-5-codexmessageresponses APImessage,messagechat message
+#
+# - temperature, top_p, top_k:message
+# - max_tokens:message token message
+agents:
+
+  # ------------------------------
+  # Qwen Coder / ModelScope API
+  # ------------------------------
+  - agent_name: argus
+    model: "placeholder"                       # message
+    api_key: "your-qwen-api-key-here"          # messageapi_key
+    base_url: ""                               # messagebase_url
+    provider: openai                           # message OpenAI message,message provider=openai
+    wire_api: chat                             # message /chat/completions message
+
+
+  # ------------------------------
+  # Claude Code(Anthropic)
+  # ------------------------------
+  - agent_name: claude
+    provider: anthropic                        # Claude message anthropic provider
+    model: "placeholder"                       # message claude-3.5-sonnet
+    api_key: "YOUR_API_KEY_HERE"
+    base_url: "placeholder"                    # message:https://api.anthropic.com/v1
+    wire_api: chat                             # Anthropic message chat schema(Claude Messages API)
+
+
+  # ------------------------------
+  # OpenAI Codex message(GPT-5, Responses API)
+  # ------------------------------
+  - agent_name: codex
+    provider: openai                           # message OpenAI provider
+    model: "placeholder"                       # message gpt-5.1 / gpt-4.1 / o3-mini
+    api_key: "YOUR_API_KEY_HERE"
+    base_url: "https://api.openai.com/v1/"     # message:message
+    wire_api: responses                        # Responses API,messagegpt-5-codexmessageresponsesmessage
+
+
+# ------------------------------------------------------------
+# message(Agent message)
+# ------------------------------------------------------------
+# locked: message(message)
+# edit-only: message,message shell
+# planning: message,message
+# yolo: message,message shell / patch / message
+permission_level: locked
+
+# ------------------------------------------------------------
+# Agent message
+# ------------------------------------------------------------
+max_turns: 30
+
+# ------------------------------------------------------------
+# Logging message
+# ------------------------------------------------------------
+enable_logging: true
+log_level: INFO
+
+# ------------------------------------------------------------
+# Memory Monitor(message)
+# ------------------------------------------------------------
+# Argus message,message.
+# - check_interval:message(message)
+# - maximum_capacity:message
+# - model:message(message)
+# - rules: message aggressive message
+memory_monitor:
+  check_interval: 3
+  maximum_capacity: 100000
+  model: "Qwen/Qwen3-235B-A22B-Instruct-2507"
+  rules:
+    - [0.92, 1]   # message 92% → message 1
+    - [0.80, 1]
+    - [0.60, 2]
+    - [0.00, 3]
+
+
+# ------------------------------------------------------------
+# MCP(Model Context Protocol)message
+# ------------------------------------------------------------
+# message MCP,Argus message,message, message.
+# message false message(message).
+mcp:
+  enabled: false
+  isolated: false
+
+  servers:
+    # message:message
+    - name: "files"
+      command: "mcp-server-files"              # message
+      args: []                                  # message
+      enabled: false
+      include: ["*"]                            # message
+      save_images_dir: null                     # message MCP message,message
+
+
+# ------------------------------------------------------------
+# message(message)
+# ------------------------------------------------------------
+permission_level: locked
+
+
+# ------------------------------------------------------------
+# message(message)
+# ------------------------------------------------------------
+project_name: "Argus Example"
+
+# message(message Agent message)
+custom_settings:
+  foo: bar
+  version: 1
+  debug: false
+
+# ------------------------------------------------------------
+# runtime:message Agent message,message
+# ------------------------------------------------------------
+runtime: {}
+

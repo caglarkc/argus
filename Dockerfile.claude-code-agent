@@ -1,0 +1,10 @@
+FROM node:20
+
+# Claude Code message CLI message
+ARG CLAUDE_CODE_VERSION=latest
+
+ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
+ENV PATH=$PATH:/usr/local/share/npm-global/bin
+
+# message @anthropic-ai/claude-code message
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}

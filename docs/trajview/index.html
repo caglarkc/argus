@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>Agent Trajectory Viewer — Dual Compare + Prompt Tags</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="styles.css" />
+  <!-- Markdown render + sanitize -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+</head>
+<body class="mode-single">
+  <div class="container">
+    <div class="topbar">
+      <label class="file-btn">
+        <input id="fileInputA" type="file" accept=".json,application/json" hidden />
+        <span>Load JSON A</span>
+      </label>
+      <span id="fileNameA" class="file-name">English</span>
+      <label class="file-btn">
+        <input id="fileInputB" type="file" accept=".json,application/json" hidden />
+        <span>Load JSON B</span>
+      </label>
+      <span id="fileNameB" class="file-name">English</span>
+      <button id="expandAllBtn" class="btn">Expand all</button>
+      <button id="collapseAllBtn" class="btn">Collapse all</button>
+      <span id="metaInfo" class="hint"></span>
+    </div>
+
+    <!-- Compare Summary -->
+    <div class="card">
+      <h3>Run Summary (A vs B)</h3>
+      <div class="card-body split">
+        <div>
+          <div class="sideTitle">A</div>
+          <div id="summaryA" class="small muted">Load a JSON file.</div>
+        </div>
+        <div>
+          <div class="sideTitle">B</div>
+          <div id="summaryB" class="small muted">Load a JSON file.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Prompt Catalogs -->
+    <div class="card">
+      <h3>Prompt Catalog (deduped & tagged)</h3>
+      <div class="card-body split">
+        <div>
+          <div class="sideTitle">A</div>
+          <div id="catalogA" class="small muted">—</div>
+        </div>
+        <div>
+          <div class="sideTitle">B</div>
+          <div id="catalogB" class="small muted">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Diff -->
+    <div class="card">
+      <h3>Diff — prompts & flow</h3>
+      <div class="card-body" id="diffBody">
+        <div class="muted small">Load A English B English.</div>
+      </div>
+    </div>
+
+    <!-- Dual timelines -->
+    <div class="card">
+      <h3>LLM Interactions Timeline (A | B)</h3>
+      <div class="card-body grid grid-2">
+        <div>
+          <div class="sideTitle">A</div>
+          <div id="timelineA" class="small muted">—</div>
+        </div>
+        <div>
+          <div class="sideTitle">B</div>
+          <div id="timelineB" class="small muted">—</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal for prompt preview -->
+  <div id="modal" class="modal" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div id="modalTitle">Prompt</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button id="copyBtn" class="btn">Copy</button>
+          <button id="closeBtn" class="btn">Close</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <pre id="modalContent" style="white-space:pre-wrap"></pre>
+      </div>
+    </div>
+  </div>
+
+  <script src="parser.js"></script>
+</body>
+</html>
+
