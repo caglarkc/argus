@@ -12,7 +12,7 @@ if str(argus_root) not in sys.path:
 class BFCLAdapter:
     """BFCLmessage - messageLLMClientmessage"""
 
-    def __init__(self, llm_client: Any, model: str, name: str = "PyWen-BFCL"):
+    def __init__(self, llm_client: Any, model: str, name: str = "Argus-BFCL"):
         self.llm_client = llm_client
         self.model = model
         self.name = name
@@ -106,6 +106,6 @@ class BFCLAdapter:
 
 
 def create_bfcl_adapter(llm_client: Any, model: str, name: Optional[str] = None) -> BFCLAdapter:
-    adapter_name = name or "PyWen-BFCL"
+    adapter_name = name or "Argus-BFCL"
     return BFCLAdapter(llm_client=llm_client, model=model, name=adapter_name)
 
